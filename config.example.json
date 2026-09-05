@@ -1,0 +1,29 @@
+{
+  "port": 8787,
+  "hosts": "auto",
+  "token": "",
+  "poll_interval": 0.3,
+  "retry_cycles": 5,
+  "max_retries": 3,
+  "stale_lines": 1,
+  "action_cooldown": 2.5,
+  "confirm_cycles": 2,
+  "default_shell": "pwsh -NoLogo",
+  "default_cols": 120,
+  "default_rows": 35,
+  "rules": {
+    "safe_override_patterns_extra": [],
+    "unsafe_patterns_extra": []
+  },
+  "reviewer": { "enabled": false, "command": "claude -p --model opus", "timeout": 90 },
+  "supervisor": {
+    "autostart": true,
+    "name": "approver",
+    "model": "opus",
+    "effort": "high",
+    "every": "1m",
+    "permission_mode": "auto",
+    "extra_args": ""
+  },
+  "log_file": "termpilot.log"
+}

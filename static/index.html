@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>termpilot</title>
+<link rel="stylesheet" href="/static/vendor/xterm.min.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="menuBtn" class="icon" title="收起 / 展开会话栏">☰</button>
+    <span class="brand"><span class="logo">▣</span> termpilot</span>
+    <button id="homeBtn" class="ghost" title="所有终端">总览 <span id="sessCount" class="count"></span></button>
+    <span id="curName" class="cur"></span>
+    <span class="spacer"></span>
+    <button id="promptsBtn" class="ghost" title="待审批 / 日志">⚑ 待审批 <span id="pendingBadge" class="badge hidden">0</span></button>
+    <button id="settingsBtn" class="icon" title="审批者设置">⚙</button>
+    <span id="connDot" class="dot off" title="连接状态"></span>
+  </header>
+
+  <aside id="sidebar">
+    <div class="side-head">
+      <span>会话</span>
+      <button id="newBtn" class="small">＋ 新建</button>
+      <button id="attachBtn" class="small">挂接</button>
+    </div>
+    <ul id="sessionList"></ul>
+    <div id="newForm" class="form hidden">
+      <label>名字 <input id="nName" placeholder="agent1"></label>
+      <label>命令 <input id="nCmd" placeholder="默认 pwsh -NoLogo，可填 claude / codex"></label>
+      <label>目录 <input id="nCwd" placeholder="可选"></label>
+      <label>模式 <select id="nMode"><option value="auto">auto 规则自动批准</option><option value="manual">manual 全部等人</option><option value="off">off 不检测</option></select></label>
+      <div class="row"><button id="nCreate" class="primary">创建</button><button id="nCancel">取消</button></div>
+    </div>
+    <div id="attachForm" class="form hidden">
+      <div class="hint">已开的 Windows Terminal 窗口和 tab，▶ 是当前活动 tab。挂接非活动 tab 时，只在该窗口不是前台窗口时才切过去读屏。</div>
+      <ul id="wtList"></ul>
+      <label>名字 <input id="aName" placeholder="会话名"></label>
+      <label>tab <input id="aTab" placeholder="留空 = 窗口当前 tab"></label>
+      <div class="row"><button id="aAttach" class="primary">挂接</button><button id="aCancel">取消</button></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="toolbar">
+      <label class="mode">模式
+        <select id="modeSel"><option value="auto">auto</option><option value="manual">manual</option><option value="off">off</option></select>
+      </label>
+      <div class="keys">
+        <button data-key="enter">Enter</button>
+        <button data-key="esc">Esc</button>
+        <button data-key="up">↑</button>
+        <button data-key="down">↓</button>
+        <button data-key="tab">Tab</button>
+        <button data-key="shift-tab">⇧Tab</button>
+        <button data-key="1">1</button>
+        <button data-key="2">2</button>
+        <button data-key="3">3</button>
+        <button data-key="y">y</button>
+        <button data-key="n">n</button>
+        <button data-key="ctrl-c">^C</button>
+      </div>
+      <span class="spacer"></span>
+      <span id="wtHint" class="hint hidden">挂接窗口：只读文本，按键和下方输入框可用</span>
+      <button id="pinBtn" class="small" title="置顶 / 取消置顶">★ 置顶</button>
+      <button id="renameBtn" class="small">改名</button>
+      <button id="killBtn" class="danger small">移除</button>
+    </div>
+    <div id="termWrap">
+      <div id="termHost"></div>
+      <pre id="wtScreen" class="hidden"></pre>
+      <div id="overview">
+        <div class="ov-head">
+          <h2>所有终端 <span id="ovCount" class="muted"></span></h2>
+          <div class="row"><button id="ovNew" class="primary small">＋ 新建终端</button><button id="ovAttach" class="small">挂接 Windows Terminal</button></div>
+        </div>
+        <div id="ovGrid" class="ov-grid"></div>
+        <div id="ovEmpty" class="muted">还没有终端。点"新建终端"起一个 pwsh，进去后输入 <code>claude</code> 即可启动 Claude Code；或者"挂接"已经开着的窗口。</div>
+      </div>
+    </div>
+    <div id="inputBar">
+      <input id="lineInput" placeholder="输入一行，回车发送到当前会话">
+      <button id="sendBtn" class="primary">发送</button>
+    </div>
+  </main>
+
+  <section id="panel">
+    <div class="side-head"><span>待审批</span><span id="reviewerFlag" class="tag"></span></div>
+    <ul id="promptList"><li class="muted">无</li></ul>
+    <div class="side-head"><span>日志</span><button id="clearLog" class="small">清空</button></div>
+    <div id="log"></div>
+  </section>
+</div>
+
+<div id="settingsModal" class="modal hidden">
+  <div class="card settings">
+    <h3>审批者（approver）设置</h3>
+    <p class="hint">审批者是一个由 termpilot 托管的 Claude Code 会话，每隔一段时间跑一次 <code>/termpilot</code> 审查其它终端。下拉里是预设，选"自定义"可以输入任何新模型名或强度，以适配以后的 Claude 更新。</p>
+    <div id="settingsFields"></div>
+    <div class="cmdline">命令：<code id="settingsCmd"></code></div>
+    <div id="settingsStatus" class="hint"></div>
+    <div class="row">
+      <button id="settingsSaveRestart" class="primary">保存并重启审批者</button>
+      <button id="settingsSave">仅保存</button>
+      <button id="settingsClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="tokenModal" class="modal hidden">
+  <div class="card">
+    <h3>termpilot token</h3>
+    <p>粘贴 <code>start.bat</code> 打印的 token，或直接打开它打印的带 token 的地址。</p>
+    <input id="tokenInput" placeholder="token">
+    <button id="tokenSave" class="primary">连接</button>
+  </div>
+</div>
+
+<script src="/static/vendor/xterm.min.js"></script>
+<script src="/static/vendor/addon-fit.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

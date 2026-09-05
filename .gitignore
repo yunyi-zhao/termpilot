@@ -1,0 +1,25 @@
+# runtime state (contains the API token, window handles, logs)
+config.json
+sessions.json
+*.log
+serve.out
+serve.err
+serve_test.out
+serve_test.err
+comtypes_gen/
+
+# build artefacts
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Claude Code per-project state
+.claude/
