@@ -17,8 +17,8 @@ BUNDLE = getattr(sys, "_MEIPASS", ROOT)
 STATIC_DIR = os.path.join(BUNDLE, "static")
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 
-# Fixed catalog, verified on 2026-09-10. No model-discovery requests at runtime.
-MODEL_CATALOG_DATE = "2026-09-10"
+# Fixed catalog, verified on 2026-10-09. No model-discovery requests at runtime.
+MODEL_CATALOG_DATE = "2026-10-09"
 PROVIDERS = {
     "codex": {"label": "Codex", "executable": "codex", "model_key": "model",
               "effort_key": "effort", "extra_key": "extra_args", "models_key": "models"},
@@ -56,13 +56,13 @@ DEFAULTS = {
     "default_cols": 120,
     "default_rows": 35,
     "rules": {},              # see rules.DEFAULT_RULES; *_extra keys append
-    "reviewer": {"enabled": False, "provider": "codex", "model": "gpt-5.3-codex-spark", "effort": "xhigh",
-                 "claude_model": "claude-opus-5", "antigravity_model": "gemini-3.8-flash-high",
+    "reviewer": {"enabled": False, "provider": "codex", "model": "gpt-6.1-sol", "effort": "xhigh",
+                 "claude_model": "claude-opus-5-5", "antigravity_model": "gemini-3.8-flash-high",
                  "claude_effort": "high", "antigravity_effort": "",
                  "claude_extra_args": "", "antigravity_extra_args": "", "command": "", "timeout": 90},
     # Codex and Antigravity use the local scheduler; Claude keeps /loop.
     "supervisor": {"autostart": True, "name": "approver", "provider": "codex",
-                   "model": "gpt-5.3-codex-spark", "claude_model": "claude-opus-5", "effort": "xhigh", "every": "1m",
+                   "model": "gpt-6.1-sol", "claude_model": "claude-opus-5-5", "effort": "xhigh", "every": "1m",
                    "claude_effort": "high", "antigravity_effort": "",
                    "antigravity_model": "gemini-3.8-flash-high", "antigravity_extra_args": "",
                    "permission_mode": "auto", "extra_args": "", "claude_extra_args": ""},
@@ -75,14 +75,16 @@ DEFAULTS = {
 SUPERVISOR_PRESETS = {
     "providers": [(key, info["label"]) for key, info in PROVIDERS.items()],
     "models": [
-        ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark（默认，最高推理 xhigh）"),
+        ("gpt-6.1-sol", "GPT-6.1 Sol（默认，日常编码主力）"),
+        ("gpt-6-astra", "GPT-6 Astra（最强推理）"),
+        ("gpt-6-sol", "GPT-6 Sol"),
+        ("gpt-6-luna", "GPT-6 Luna（最省）"),
         ("gpt-5.6-sol", "GPT-5.6 Sol"),
-        ("gpt-6-astra", "GPT-6 Astra"),
         ("gpt-5.6-terra", "GPT-5.6 Terra"),
         ("gpt-5.6-luna", "GPT-5.6 Luna"),
     ],
-    "claude_models": [("claude-opus-5", "Opus 5（默认）"), ("claude-sonnet-5", "Sonnet 5"),
-                      ("claude-fable-5-1", "Fable 5.1"), ("claude-haiku-4-5", "Haiku 4.5")],
+    "claude_models": [("claude-opus-5-5", "Opus 5.5（默认）"), ("claude-sonnet-5-5", "Sonnet 5.5"),
+                      ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-1", "Fable 5.1")],
     "antigravity_models": [
         ("gemini-3.8-flash-high", "Gemini 3.8 Flash High（默认）"),
         ("gemini-3.8-flash-medium", "Gemini 3.8 Flash Medium"),
@@ -96,11 +98,20 @@ SUPERVISOR_PRESETS = {
         ("gemini-3.1-pro-high", "Gemini 3.1 Pro High"),
         ("gemini-3.1-pro-low", "Gemini 3.1 Pro Low"),
     ],
-    "efforts": ["low", "medium", "high", "xhigh", "max"],
-    "claude_efforts": ["low", "medium", "high", "max"],
+    "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+    "claude_efforts": ["low", "medium", "high", "xhigh", "max"],
     "antigravity_efforts": [("", "按模型预设"), "low", "medium", "high"],
     "permission_modes": ["auto", "acceptEdits", "dontAsk", "bypassPermissions", "manual", "plan"],
     "intervals": ["30s", "1m", "2m", "5m", "10m"],
+}
+
+# Models that left a CLI's catalog: a saved config pinning one is rewritten on
+# load, otherwise the CLI rejects the --model value. Served models are left alone.
+RETIRED_MODELS = {
+    "model": {"gpt-5.3-codex-spark": "gpt-6.1-sol", "gpt-5.3-codex": "gpt-6.1-sol",
+              "gpt-5.5": "gpt-6.1-sol"},
+    "claude_model": {},
+    "antigravity_model": {},
 }
 
 SUPERVISOR_FIELDS = [
@@ -177,6 +188,10 @@ def load():
         merged.update(old)
         if "claude_effort" not in old and "effort" in old:
             merged["claude_effort"] = old["effort"]
+        for field, retired in RETIRED_MODELS.items():
+            if merged.get(field) in retired:
+                merged[field] = retired[merged[field]]
+                changed = True
         if old and "provider" not in old:
             if key == "supervisor":
                 merged["claude_model"] = old.get("model") or "opus"

@@ -30,17 +30,19 @@ python termpilot.py serve          # 监听 127.0.0.1 + Tailscale IP
 
 支持 `codex`、`claude`、`antigravity` 三种 provider，分别调用 `codex`、`claude`、`agy`。三个 CLI 的配置同时保存；选择 provider 只决定当前审批者使用哪一个。普通终端可以同时运行三个 CLI。
 
-模型预设固定于 **2026-09-10**，启动和打开设置时不查询或更新模型列表。保留自定义模型 ID 输入。Codex 默认使用 `gpt-5.3-codex-spark`，推理等级为该模型支持的最高档 `xhigh`。
+模型预设固定于 **2026-10-09**，启动和打开设置时不查询或更新模型列表。保留自定义模型 ID 输入。Codex 默认使用 `gpt-6.1-sol`，推理等级 `xhigh`（该模型另有 `max`、`ultra` 两档，`ultra` 会自动派生子任务，不适合每分钟一轮的巡检，需要时可手填）。
 
 | CLI | 默认模型 | 其它固定预设 |
 |---|---|---|
-| Codex | `gpt-5.3-codex-spark` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-5.6-terra`、`gpt-5.6-luna` |
-| Claude Code | `claude-opus-5` | `claude-sonnet-5`、`claude-fable-5-1`、`claude-haiku-4-5` |
+| Codex | `gpt-6.1-sol` | `gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` |
+| Claude Code | `claude-opus-5-5` | `claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-fable-5-1` |
 | Antigravity | `gemini-3.8-flash-high` | Gemini 3.8/3.7/3.6 Flash 的 high/medium/low、Gemini 3.1 Pro 的 high/low |
 
-版本依据：[Codex 模型文档](https://learn.chatgpt.com/docs/models)、[Claude Code 模型配置](https://code.claude.com/docs/en/model-config)、[Antigravity 模型文档](https://antigravity.google/docs/models/)及本机 `agy models` 的一次性核对。具体模型能否使用取决于各 CLI 的登录账号和权限。
+旧配置里钉住已下架的 `gpt-5.3-codex-spark`（以及 `gpt-5.3-codex`、`gpt-5.5`）时，load 时自动改写为 `gpt-6.1-sol` 并存盘；仍在服务的模型 ID 不动。
 
-默认模式是 **ChatGPT / Codex**，默认模型 `gpt-5.3-codex-spark`，推理等级 `xhigh`。先在运行服务的同一台机器、同一个用户下完成 `codex login`，用 `codex login status` 确认登录。无需另填 OpenAI API key。接入使用官方 [Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 和 [ChatGPT 登录](https://learn.chatgpt.com/docs/auth)。
+版本依据：本机 `codex debug models` 与 `agy models` 的一次性核对，以及 [Codex 模型文档](https://learn.chatgpt.com/docs/models)、[Claude Code 模型配置](https://code.claude.com/docs/en/model-config)、[Antigravity 模型文档](https://antigravity.google/docs/models/)。具体模型能否使用取决于各 CLI 的登录账号和权限。
+
+默认模式是 **ChatGPT / Codex**，默认模型 `gpt-6.1-sol`，推理等级 `xhigh`。先在运行服务的同一台机器、同一个用户下完成 `codex login`，用 `codex login status` 确认登录。无需另填 OpenAI API key。接入使用官方 [Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 和 [ChatGPT 登录](https://learn.chatgpt.com/docs/auth)。
 
 Codex 审批者由 termpilot 定时调度：获取待审批提示和终端画面，通过 `codex exec` 请求 JSON 判断，再执行 approve / deny；hold 留给用户。每轮结束后等待 `every` 指定的间隔，没有待审批提示时不调用模型。调用以 read-only 运行，模型不需要直接访问 termpilot 服务。执行前会再次检查提示和画面；模型报错、输出不合法、提示已处理或画面变化时都不会批准。
 
@@ -51,8 +53,8 @@ Codex 审批者由 termpilot 定时调度：获取待审批提示和终端画面
 ```json
 "supervisor": {
   "provider": "codex",
-  "model": "gpt-5.3-codex-spark",
-  "claude_model": "claude-opus-5",
+  "model": "gpt-6.1-sol",
+  "claude_model": "claude-opus-5-5",
   "antigravity_model": "gemini-3.8-flash-high",
   "effort": "xhigh",
   "claude_effort": "high",
@@ -67,7 +69,7 @@ Codex 审批者由 termpilot 定时调度：获取待审批提示和终端画面
 }
 ```
 
-切换 Claude Code：设为 `claude`，保存并重启审批者。它使用 `claude --model claude-opus-5 --effort high --permission-mode auto` 和 `/loop 1m /termpilot`；`permission_mode` 只作用于 Claude。首次启动 Claude 审批者时安装 `/termpilot` 命令。
+切换 Claude Code：设为 `claude`，保存并重启审批者。它使用 `claude --model claude-opus-5-5 --effort high --permission-mode auto` 和 `/loop 1m /termpilot`；`permission_mode` 只作用于 Claude。首次启动 Claude 审批者时安装 `/termpilot` 命令。
 
 切换 Antigravity：先在本机交互式运行 `agy` 完成登录，然后设为 `antigravity`，保存并重启审批者。它与 Codex 一样由 Termpilot 定时调度，使用 `agy` 的 stdin/stdout JSON 流和 JSON Schema 返回决策，无需安装 Claude 命令。每次审核使用临时工作目录和 `plan` 模式，收到失败状态、无效 JSON、重复决策或变化的终端画面时不执行批准。接入依据：[Antigravity 非交互模式](https://antigravity.google/docs/cli/headless/)。`antigravity` 命令是 IDE 启动器，CLI 应使用 `agy`。
 
@@ -166,7 +168,7 @@ python termpilot.py kill agent1
 | `retry_cycles` / `max_retries` | 5 / 3 | 批准后提示仍在就重发 Enter |
 | `default_shell` | `pwsh -NoLogo` | 新会话命令 |
 | `rules` | `{}` | 见下 |
-| `reviewer` | `{"enabled": false, "provider": "codex", "model": "gpt-5.3-codex-spark", "effort": "xhigh", "command": "", "timeout": 90}` | LLM 二审 |
+| `reviewer` | `{"enabled": false, "provider": "codex", "model": "gpt-6.1-sol", "effort": "xhigh", "command": "", "timeout": 90}` | LLM 二审 |
 
 ### 规则
 

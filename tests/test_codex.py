@@ -24,7 +24,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(cfg["token"], "keep")
             self.assertEqual(cfg["port"], 9123)
             self.assertEqual(cfg["supervisor"]["provider"], "codex")
-            self.assertEqual(cfg["supervisor"]["model"], "gpt-5.3-codex-spark")
+            self.assertEqual(cfg["supervisor"]["model"], "gpt-6.1-sol")
             self.assertEqual(cfg["supervisor"]["claude_model"], "sonnet")
             self.assertEqual(cfg["supervisor"]["claude_extra_args"], "--verbose")
             self.assertEqual(cfg["supervisor"]["every"], "5m")
@@ -32,6 +32,21 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(cfg["reviewer"]["enabled"])
             self.assertEqual(cfg["reviewer"]["command"], "")
             self.assertEqual(config.load(), cfg)
+
+    def test_retired_model_pins_are_rewritten_and_saved(self):
+        stored = {"token": "keep", "supervisor": {"provider": "codex", "model": "gpt-5.3-codex-spark",
+                                                  "claude_model": "claude-opus-5", "effort": "xhigh"},
+                  "reviewer": {"provider": "codex", "model": "gpt-5.3-codex-spark"}}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(config, "CONFIG_PATH", os.path.join(tmp, "config.json")):
+            Path(config.CONFIG_PATH).write_text(json.dumps(stored), encoding="utf-8")
+            cfg = config.load()
+            self.assertEqual(cfg["supervisor"]["model"], "gpt-6.1-sol")
+            self.assertEqual(cfg["reviewer"]["model"], "gpt-6.1-sol")
+            # Still served, so an explicit pin survives.
+            self.assertEqual(cfg["supervisor"]["claude_model"], "claude-opus-5")
+            self.assertEqual(cfg["supervisor"]["effort"], "xhigh")
+            self.assertEqual(json.loads(Path(config.CONFIG_PATH).read_text(encoding="utf-8"))
+                             ["supervisor"]["model"], "gpt-6.1-sol")
 
     def test_commands_keep_provider_flags_separate(self):
         cfg = copy.deepcopy(config.DEFAULTS["supervisor"])
@@ -41,7 +56,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(decoded, cfg)
         cfg["provider"] = "claude"
         cmd = config.supervisor_command(cfg)
-        self.assertIn("--model claude-opus-5", cmd)
+        self.assertIn("--model claude-opus-5-5", cmd)
         self.assertNotIn("gpt-", cmd)
 
     def test_interval_validation(self):

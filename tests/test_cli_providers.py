@@ -56,8 +56,8 @@ class ProviderTests(unittest.TestCase):
 
     def test_interactive_commands_use_independent_models_and_efforts(self):
         sc = dict(config.DEFAULTS["supervisor"], effort="xhigh", claude_effort="medium", antigravity_effort="low")
-        for provider, model, effort in (("codex", "gpt-5.3-codex-spark", "xhigh"),
-                                         ("claude", "claude-opus-5", "medium"),
+        for provider, model, effort in (("codex", "gpt-6.1-sol", "xhigh"),
+                                         ("claude", "claude-opus-5-5", "medium"),
                                          ("antigravity", "gemini-3.8-flash-high", "low")):
             with self.subTest(provider=provider):
                 cmd = config.session_command(sc, provider)
@@ -93,7 +93,7 @@ class ProviderTests(unittest.TestCase):
                 return_value=subprocess.CompletedProcess([], 0, "HOLD review", "")) as run:
             self.assertEqual(ai_cli.run_model("screen", sc), "HOLD review")
         cmd = run.call_args.args[0]
-        self.assertEqual(cmd[cmd.index("--model") + 1], "claude-opus-5")
+        self.assertEqual(cmd[cmd.index("--model") + 1], "claude-opus-5-5")
         self.assertEqual(cmd[cmd.index("--effort") + 1], "medium")
         self.assertIn("--verbose", cmd)
         for unexpected in ("xhigh", "--codex-only", "--agy-only"):
@@ -145,7 +145,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.get("/api/config/supervisor", headers=self.headers)
             data = await response.json()
         self.assertEqual(set(data["providers"]), {"codex", "claude", "antigravity"})
-        self.assertEqual(data["catalog_date"], "2026-09-10")
+        self.assertEqual(data["catalog_date"], "2026-10-09")
 
     async def test_create_all_three_clis_with_per_session_model(self):
         for provider in config.PROVIDERS:
