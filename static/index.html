@@ -29,7 +29,9 @@
     <ul id="sessionList"></ul>
     <div id="newForm" class="form hidden">
       <label>名字 <input id="nName" placeholder="agent1"></label>
-      <label>命令 <input id="nCmd" placeholder="默认 pwsh -NoLogo，可填 claude / codex"></label>
+      <label>CLI <select id="nProvider"><option value="">Shell / 自定义命令</option><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="antigravity">Antigravity</option></select></label>
+      <label id="nCommandField">命令 <input id="nCmd" placeholder="默认 pwsh -NoLogo，可填 codex / claude / agy"></label>
+      <label id="nModelField" class="hidden">模型 <input id="nModel" list="nModels" placeholder="使用该 CLI 已保存的模型"><datalist id="nModels"></datalist></label>
       <label>目录 <input id="nCwd" placeholder="可选"></label>
       <label>模式 <select id="nMode"><option value="auto">auto 规则自动批准</option><option value="manual">manual 全部等人</option><option value="off">off 不检测</option></select></label>
       <div class="row"><button id="nCreate" class="primary">创建</button><button id="nCancel">取消</button></div>
@@ -77,7 +79,7 @@
           <div class="row"><button id="ovNew" class="primary small">＋ 新建终端</button><button id="ovAttach" class="small">挂接 Windows Terminal</button></div>
         </div>
         <div id="ovGrid" class="ov-grid"></div>
-        <div id="ovEmpty" class="muted">还没有终端。点"新建终端"起一个 pwsh，进去后输入 <code>claude</code> 即可启动 Claude Code；或者"挂接"已经开着的窗口。</div>
+        <div id="ovEmpty" class="muted">还没有终端。点“新建终端”选择 Codex、Claude Code、Antigravity 或自定义命令；也可以“挂接”已经开着的窗口。三种 CLI 可以同时运行。</div>
       </div>
     </div>
     <div id="inputBar">
@@ -96,8 +98,9 @@
 
 <div id="settingsModal" class="modal hidden">
   <div class="card settings">
-    <h3>审批者（approver）设置</h3>
-    <p class="hint">审批者是一个由 termpilot 托管的 Claude Code 会话，每隔一段时间跑一次 <code>/termpilot</code> 审查其它终端。下拉里是预设，选"自定义"可以输入任何新模型名或强度，以适配以后的 Claude 更新。</p>
+    <h3>CLI 配置 / 审批者设置</h3>
+    <p class="hint">选择 Codex、Claude Code 或 Antigravity 作为审批者。每种 CLI 的模型、推理强度和附加参数分别保存，也用于新建终端。切换 CLI 可编辑它的配置。</p>
+    <p id="catalogDate" class="hint"></p>
     <div id="settingsFields"></div>
     <div class="cmdline">命令：<code id="settingsCmd"></code></div>
     <div id="settingsStatus" class="hint"></div>

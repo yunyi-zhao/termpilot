@@ -49,8 +49,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("termpilot 控制面板")
-        self.geometry("720x640")
-        self.minsize(640, 560)
+        self.geometry("760x760")
+        self.minsize(700, 680)
         self.cfg = config_mod.load()
         self.proc = None
         self._build()
@@ -92,28 +92,33 @@ class App(tk.Tk):
         ttk.Button(b, text="重新生成 token", command=self._new_token).pack(side="left")
 
         # --- approver
-        f2 = ttk.LabelFrame(root, text="审批者（一个由 termpilot 托管的 Claude Code 会话，定期跑 /termpilot 审查其它终端）", padding=8)
+        f2 = ttk.LabelFrame(root, text="CLI 配置 / 审批者（Codex · Claude Code · Antigravity）", padding=8)
         f2.pack(fill="x", **pad)
         self.sv = {}
-        rows = [("model", "模型 --model", [m[0] for m in SUPERVISOR_PRESETS["models"]]),
-                ("effort", "推理强度 --effort", SUPERVISOR_PRESETS["efforts"]),
-                ("every", "巡检间隔 /loop", SUPERVISOR_PRESETS["intervals"]),
-                ("permission_mode", "权限模式", SUPERVISOR_PRESETS["permission_modes"]),
-                ("extra_args", "附加参数", None),
-                ("name", "会话名", None)]
+        self.sv_widgets = {}
+        rows = []
+        for key, label, kind, choices_key in config_mod.SUPERVISOR_FIELDS:
+            if kind == "bool":
+                continue
+            presets = SUPERVISOR_PRESETS.get(choices_key, [])
+            choices = [v[0] if isinstance(v, tuple) else v for v in presets]
+            rows.append((key, label, choices))
         for i, (key, label, choices) in enumerate(rows):
-            ttk.Label(f2, text=label).grid(row=i // 2, column=(i % 2) * 2, sticky="w", pady=2)
+            lab = ttk.Label(f2, text=label)
+            lab.grid(row=i // 2, column=(i % 2) * 2, sticky="w", pady=2)
             var = tk.StringVar(); self.sv[key] = var
             if choices:
-                w = ttk.Combobox(f2, textvariable=var, values=choices, width=22)  # editable: any new model/effort can be typed
+                w = ttk.Combobox(f2, textvariable=var, values=choices, width=22,
+                                 state="readonly" if key in ("provider", "permission_mode") else "normal")
             else:
                 w = ttk.Entry(f2, textvariable=var, width=25)
             w.grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w", padx=(6, 18), pady=2)
+            self.sv_widgets[key] = (lab, w)
             var.trace_add("write", lambda *_: self._refresh_cmd())
         self.autostart = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f2, text="启动服务时自动拉起审批者", variable=self.autostart).grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(f2, text="启动服务时自动拉起审批者", variable=self.autostart).grid(row=(len(rows) + 1) // 2, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.cmd_label = ttk.Label(f2, text="", foreground="#555", wraplength=640, justify="left")
-        self.cmd_label.grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        self.cmd_label.grid(row=(len(rows) + 1) // 2 + 1, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
         # --- actions
         f3 = ttk.Frame(root); f3.pack(fill="x", **pad)
@@ -171,10 +176,16 @@ class App(tk.Tk):
 
     def _save(self, quiet=False):
         self.cfg = self._collect()
+        try:
+            supervisor_command(self.cfg["supervisor"])
+        except ValueError as exc:
+            messagebox.showerror("配置无效", str(exc))
+            return False
         config_mod.save(self.cfg)
         if not quiet:
             self._set_status("已保存 config.json")
         self._refresh_urls()
+        return True
 
     def _hosts_preview(self):
         c = self._collect()
@@ -196,7 +207,26 @@ class App(tk.Tk):
 
     def _refresh_cmd(self):
         sc = {k: v.get().strip() for k, v in self.sv.items()}
-        self.cmd_label.config(text="启动命令：%s    →  /loop %s /termpilot" % (supervisor_command(sc), sc.get("every") or "1m"))
+        if not hasattr(self, "cmd_label"):
+            return
+        provider = sc.get("provider") or "codex"
+        visible = 0
+        for key, (lab, widget) in self.sv_widgets.items():
+            if config_mod.FIELD_PROVIDERS.get(key, provider) != provider:
+                lab.grid_remove(); widget.grid_remove()
+            else:
+                lab.grid(row=visible // 2, column=(visible % 2) * 2)
+                widget.grid(row=visible // 2, column=(visible % 2) * 2 + 1)
+                visible += 1
+        try:
+            info = config_mod.provider_info(provider)
+            if provider in ("codex", "antigravity"):
+                text = "%s: %s；巡检间隔 %s" % (info["label"], sc.get(info["model_key"]), sc.get("every") or "单次")
+            else:
+                text = supervisor_command(sc) + " → " + ("/loop %s /termpilot" % sc["every"] if sc.get("every") else "/termpilot")
+        except ValueError as exc:
+            text = str(exc)
+        self.cmd_label.config(text=text)
 
     def _sel_url(self):
         sel = self.urls.curselection()
@@ -227,7 +257,8 @@ class App(tk.Tk):
             return None
 
     def _start(self):
-        self._save(quiet=True)
+        if not self._save(quiet=True):
+            return
         pid = self._running_pid()
         if pid:
             self._stop(quiet=True); time.sleep(0.8)
@@ -269,7 +300,8 @@ class App(tk.Tk):
             return json.loads(r.read().decode())
 
     def _restart_approver(self):
-        self._save(quiet=True)
+        if not self._save(quiet=True):
+            return
         if not self._running_pid():
             self._set_status("服务没有在运行，先启动服务"); return
         def run():

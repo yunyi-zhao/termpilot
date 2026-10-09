@@ -1,6 +1,6 @@
 # termpilot
 
-Supervise the AI coding agents (Claude Code, Codex, Gemini CLI, …) running in your Windows terminals: a rule engine auto-approves the boring permission prompts, holds the risky ones, and a Claude Code "approver" session reviews what is held. Everything is visible and controllable from a WebUI over your Tailscale network, from a desktop control panel, or from an interactive console. Windows only (ConPTY + UI Automation). Download `termpilot.exe` from the Releases page, double-click it, set the address and the approver's model, start. The rest of this README is in Chinese.
+Supervise Codex, Claude Code and Antigravity CLI in your Windows terminals. Each CLI has its own saved model, reasoning effort and extra arguments; all three can run at the same time. A rule engine handles permission prompts, with an optional CLI approver. Use the WebUI over Tailscale, the desktop control panel or the interactive console. Windows only (ConPTY + UI Automation). The rest of this README is in Chinese.
 
 ---
 
@@ -8,7 +8,7 @@ Supervise the AI coding agents (Claude Code, Codex, Gemini CLI, …) running in 
 
 - **托管会话（pty）**：termpilot 自己用 ConPTY 启动 `pwsh`，输出流和按键都是确定的，WebUI 里是真正的 xterm.js 终端，可以远程敲命令。
 - **挂接会话（wt）**：通过 UI Automation 读取已经开着的 Windows Terminal 窗口（当前活动 tab），用 PostMessage 发按键，不抢焦点。只读文本，不是完整终端。
-- **审批引擎**：每秒看一次屏幕，识别 Claude Code / Codex / Gemini CLI 风格的权限提示；规则判定安全就自动 Enter，删除类命令、破坏性 git、进程/系统操作、"让你选方案"的提问一律 hold 住等人。可选接 `claude -p` 做二次审核。
+- **审批引擎**：每秒看一次屏幕，识别 Claude Code / Codex / Gemini CLI 风格的权限提示；规则判定安全就自动 Enter，删除类命令、破坏性 git、进程/系统操作、"让你选方案"的提问一律 hold 住等人。可选接 Codex（默认）或 Claude CLI 做二次审核。
 - **三种模式**：`auto`（规则自动批准）、`manual`（全部等人）、`off`（不检测）。
 
 ## 启动
@@ -28,28 +28,75 @@ python termpilot.py serve          # 监听 127.0.0.1 + Tailscale IP
 
 ## 审批者（approver）
 
-真正做判断的不是正则，而是一个跑 `/loop 1m /termpilot` 的 Claude Code 会话。服务启动时会自动把它作为托管会话拉起来（名字 `approver`，置顶，WebUI 第一张卡片，带"审批者"标签），命令是 `claude --permission-mode auto --model opus`，工作目录是本项目。它自己在 termpilot 里是 manual 模式：规则引擎不会替它按键，它的提示只由你处理。
+支持 `codex`、`claude`、`antigravity` 三种 provider，分别调用 `codex`、`claude`、`agy`。三个 CLI 的配置同时保存；选择 provider 只决定当前审批者使用哪一个。普通终端可以同时运行三个 CLI。
 
-- 看它：WebUI 点 approver 卡片，或总控终端 `watch approver`。
-- 跟它说话：卡片里直接打字，或 `send approver "agent1 选方案 B"`。
-- 重启它：总控终端 `supervisor`，或 `python termpilot.py supervisor [--every 5m]`。
-- 设置（模型 / 推理强度 / 巡检间隔 / 权限模式 / 附加参数 / 自动拉起）有三个入口，改的都是 config.json 的 `supervisor` 段：
-  - `start.bat` 启动时的问答向导（回车保留当前值，输数字选预设，或直接输入自定义值）。`start.bat /q` 跳过问答。
-  - WebUI 顶栏 ⚙，"保存并重启审批者"立即生效，"仅保存"下次重启审批者时生效。手机上也能改。
-  - 总控终端 `setup` / `setup restart`，或 `python termpilot.py setup [--show|--quick]`。
-  - 预设列表在 `termpilot/config.py` 的 `SUPERVISOR_PRESETS`；所有字段都接受自定义值，所以新模型名（如 `--model` 支持的别名 fable/opus/sonnet 或完整模型 ID）和新的 effort 等级出来后直接填就行，`extra_args` 可以原样追加以后新增的 claude 参数。
+模型预设固定于 **2026-09-10**，启动和打开设置时不查询或更新模型列表。保留自定义模型 ID 输入。Codex 默认使用 `gpt-5.3-codex-spark`，推理等级为该模型支持的最高档 `xhigh`。
 
-规则引擎仍然在前面挡一层：明显安全的直接放行，删除、破坏性 git、杀进程、改系统、方案选择这些 hold 住等 approver 来看。
+| CLI | 默认模型 | 其它固定预设 |
+|---|---|---|
+| Codex | `gpt-5.3-codex-spark` | `gpt-5.6-sol`、`gpt-6-astra`、`gpt-5.6-terra`、`gpt-5.6-luna` |
+| Claude Code | `claude-opus-5` | `claude-sonnet-5`、`claude-fable-5-1`、`claude-haiku-4-5` |
+| Antigravity | `gemini-3.8-flash-high` | Gemini 3.8/3.7/3.6 Flash 的 high/medium/low、Gemini 3.1 Pro 的 high/low |
 
-## 开一个 Claude Code 会话
+版本依据：[Codex 模型文档](https://learn.chatgpt.com/docs/models)、[Claude Code 模型配置](https://code.claude.com/docs/en/model-config)、[Antigravity 模型文档](https://antigravity.google/docs/models/)及本机 `agy models` 的一次性核对。具体模型能否使用取决于各 CLI 的登录账号和权限。
+
+默认模式是 **ChatGPT / Codex**，默认模型 `gpt-5.3-codex-spark`，推理等级 `xhigh`。先在运行服务的同一台机器、同一个用户下完成 `codex login`，用 `codex login status` 确认登录。无需另填 OpenAI API key。接入使用官方 [Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode) 和 [ChatGPT 登录](https://learn.chatgpt.com/docs/auth)。
+
+Codex 审批者由 termpilot 定时调度：获取待审批提示和终端画面，通过 `codex exec` 请求 JSON 判断，再执行 approve / deny；hold 留给用户。每轮结束后等待 `every` 指定的间隔，没有待审批提示时不调用模型。调用以 read-only 运行，模型不需要直接访问 termpilot 服务。执行前会再次检查提示和画面；模型报错、输出不合法、提示已处理或画面变化时都不会批准。
+
+审批者在 WebUI 中置顶，名为 `approver`，自身保持 manual 模式。可以在卡片里输入指导，或运行 `send approver "说明"`，供下一轮参考；需要输入文字或选择特殊按键的提示会保留，并说明应如何处理。Codex 每轮是独立调用，保留本次运行最近 20 条指导。Ctrl-C 停止巡检。
+
+设置有三个入口：启动向导、WebUI 顶栏 ⚙、桌面面板。总控终端也可以用 `setup` 或 `setup restart`。切换 CLI 后只显示对应字段，未显示的配置仍然保留。`model` / `effort` / `extra_args` 属于 Codex；Claude 使用 `claude_model` / `claude_effort` / `claude_extra_args`；Antigravity 使用 `antigravity_model` / `antigravity_effort` / `antigravity_extra_args`。Antigravity 的推理强度留空时使用模型 ID 中的强度设置。
+
+```json
+"supervisor": {
+  "provider": "codex",
+  "model": "gpt-5.3-codex-spark",
+  "claude_model": "claude-opus-5",
+  "antigravity_model": "gemini-3.8-flash-high",
+  "effort": "xhigh",
+  "claude_effort": "high",
+  "antigravity_effort": "",
+  "every": "1m",
+  "autostart": true,
+  "name": "approver",
+  "permission_mode": "auto",
+  "extra_args": "",
+  "claude_extra_args": "",
+  "antigravity_extra_args": ""
+}
+```
+
+切换 Claude Code：设为 `claude`，保存并重启审批者。它使用 `claude --model claude-opus-5 --effort high --permission-mode auto` 和 `/loop 1m /termpilot`；`permission_mode` 只作用于 Claude。首次启动 Claude 审批者时安装 `/termpilot` 命令。
+
+切换 Antigravity：先在本机交互式运行 `agy` 完成登录，然后设为 `antigravity`，保存并重启审批者。它与 Codex 一样由 Termpilot 定时调度，使用 `agy` 的 stdin/stdout JSON 流和 JSON Schema 返回决策，无需安装 Claude 命令。每次审核使用临时工作目录和 `plan` 模式，收到失败状态、无效 JSON、重复决策或变化的终端画面时不执行批准。接入依据：[Antigravity 非交互模式](https://antigravity.google/docs/cli/headless/)。`antigravity` 命令是 IDE 启动器，CLI 应使用 `agy`。
+
+旧配置首次读取时迁移到 Codex，保留 token、地址、端口、巡检间隔、自动启动开关，并将原来的模型/附加参数移到 Claude 字段。自定义二审 `command` 仍是显式覆盖项；清空它才使用 `reviewer.provider`。模式选择一旦保存，之后不会反复迁移。
+
+- 查看：WebUI approver 卡片，或总控终端 `watch approver`。
+- 重启：总控终端 `supervisor`，或 `python termpilot.py supervisor [--every 5m]`。
+- 单轮：`python termpilot.py supervisor --no-loop`，或将 `every` 留空。
+- 二审：`reviewer.enabled=true`；同样支持三种 provider 及各自的模型字段，默认关闭。二审失败或回答含糊时 hold。
+
+## 同时运行三种 CLI
+
+WebUI 点击“新建终端”，选择 CLI 和模型，再填写会话名及工作目录。模型默认使用该 CLI 已保存的配置，也可以仅为这个终端指定其它模型。重复创建即可同时运行三种 CLI。选择“Shell / 自定义命令”仍可启动任意命令。
+
+```powershell
+python termpilot.py new codex1 --provider codex --cwd D:\proj
+python termpilot.py new claude1 --provider claude --cwd D:\proj
+python termpilot.py new agy1 --provider antigravity --model gemini-3.8-flash-medium --cwd D:\proj
+```
+
+总控终端中的 `new` 接受相同的 `--provider` 和 `--model` 参数。也可以直接输入启动命令：
 
 三种等价方式：
 
-- WebUI 总览页点"新建终端"，命令栏填 `claude`，工作目录填项目路径。
-- WebUI 新建一个默认的 pwsh 终端，在里面敲 `claude`。
-- 总控终端或 CLI：`new agent1 --cwd D:\proj --cmd claude`，或者 `new agent1 --cwd D:\proj` 再 `send agent1 claude`。
+- WebUI 总览页点"新建终端"，命令栏填 `codex`，工作目录填项目路径。
+- WebUI 新建一个默认的 pwsh 终端，在里面敲 `codex`。
+- 总控终端或 CLI：`new agent1 --cwd D:\proj --cmd codex`，或者 `new agent1 --cwd D:\proj` 再 `send agent1 codex`。
 
-Codex、Gemini CLI 同理，把命令换成 `codex` / `gemini`。会话启动时会剥掉父进程的 `CLAUDECODE` / `CLAUDE_CODE_*` 环境变量，所以就算服务是从某个 Claude Code 里启动的，子会话也能正常起 Claude Code。
+Claude Code、Antigravity CLI 同理，把命令换成 `claude` / `agy`。会话启动时会剥掉父进程的 `CLAUDECODE` / `CLAUDE_CODE_*` 环境变量，所以就算服务是从某个 Claude Code 里启动的，子会话也能正常起 Claude Code。
 
 ## 打包成 exe 到别的机器上用
 
@@ -57,7 +104,7 @@ Codex、Gemini CLI 同理，把命令换成 `codex` / `gemini`。会话启动时
 .\build.ps1        # 产出 dist\termpilot.exe（单文件，PyInstaller）
 ```
 
-把 `termpilot.exe` 拷到目标 Windows 机器任意目录，那台机器只需要装了 Claude Code（`claude` 在 PATH 里）。**双击 exe 打开控制面板**（图形界面）：设 WebUI 地址（自动 / 所有网卡 / 自定义 IP）和端口，设审批者的模型、推理强度、巡检间隔、权限模式，然后"保存并启动服务"。面板上能复制或直接打开带 token 的地址、重启审批者、打开总控终端、一键加防火墙规则、看服务日志。关闭面板时可以选择让服务继续在后台跑。命令行用法：
+把 `termpilot.exe` 拷到目标 Windows 机器任意目录，安装并登录需要使用的 CLI：Codex 对应 `codex`，Claude Code 对应 `claude`，Antigravity 对应 `agy`，命令需在 PATH 中。**双击 exe 打开控制面板**：设置 WebUI 地址和端口，选择 CLI、模型、推理强度及巡检间隔，然后“保存并启动服务”。面板上可打开 WebUI、重启审批者、打开总控终端、添加防火墙规则和查看日志。关闭面板时可以选择让服务继续在后台运行。命令行用法：
 
 ```
 termpilot.exe start          # 问答向导 → 后台起服务 → 自动拉起审批者；-q 跳过向导
@@ -66,7 +113,7 @@ termpilot.exe stop
 termpilot.exe ls / new / send / approve / watch ...   # 和 python termpilot.py 一样
 ```
 
-首次运行会在 exe 旁边生成 `config.json`（新 token）、`sessions.json`、日志，并把 `/termpilot` 斜杠命令写到那台机器的 `~\.claude\commands\termpilot.md`（内容来自 `templates\termpilot.md`，调用路径按 exe 位置填好；文件带 termpilot-managed 标记，去掉标记就不会再覆盖）。Tailscale 有则监听 Tailscale IP，没有则只有 127.0.0.1，可在 config.json 的 `hosts` 里写具体 IP 或 `"0.0.0.0"`。防火墙放行需要管理员：`termpilot.exe firewall`。
+首次运行会在 exe 旁边生成 `config.json`（新 token）、`sessions.json`、日志，选择 Claude 模式时再把 `/termpilot` 斜杠命令写到那台机器的 `~\.claude\commands\termpilot.md`（内容来自 `templates\termpilot.md`，调用路径按 exe 位置填好；文件带 termpilot-managed 标记，去掉标记就不会再覆盖）。Tailscale 有则监听 Tailscale IP，没有则只有 127.0.0.1，可在 config.json 的 `hosts` 里写具体 IP 或 `"0.0.0.0"`。防火墙放行需要管理员：`termpilot.exe firewall`。
 
 限制：只支持 Windows（ConPTY、UI Automation）；挂接模式只认 Windows Terminal 窗口；exe 内置的是 x64 的 pywinpty，ARM 机器需要在 ARM 上重新打包。
 
@@ -79,7 +126,7 @@ termpilot.exe ls / new / send / approve / watch ...   # 和 python termpilot.py 
 ```
 python termpilot.py new agent1 [--cmd "pwsh -NoLogo"] [--cwd D:\proj] [--mode auto|manual|off]
 python termpilot.py ls
-python termpilot.py send agent1 claude            # 输入一行 + Enter
+python termpilot.py send agent1 codex            # 输入一行 + Enter
 python termpilot.py keys agent1 enter | esc | up | down | 1 | y | ctrl-c
 python termpilot.py screen agent1 -n 40
 python termpilot.py prompts                       # 等待处理的提示
@@ -119,7 +166,7 @@ python termpilot.py kill agent1
 | `retry_cycles` / `max_retries` | 5 / 3 | 批准后提示仍在就重发 Enter |
 | `default_shell` | `pwsh -NoLogo` | 新会话命令 |
 | `rules` | `{}` | 见下 |
-| `reviewer` | `{"enabled": false, "command": "claude -p", "timeout": 90}` | LLM 二审 |
+| `reviewer` | `{"enabled": false, "provider": "codex", "model": "gpt-5.3-codex-spark", "effort": "xhigh", "command": "", "timeout": 90}` | LLM 二审 |
 
 ### 规则
 
@@ -142,6 +189,10 @@ python termpilot.py kill agent1
 
 ## 测试
 
+不调用真实模型的回归测试：`python -m unittest discover -s tests -p 'test_*.py' -v`。覆盖三种 CLI 的配置保存、参数隔离、模型结果解析、接口路由、错误和过期审批结果。`node tests/test_settings.js` 检查设置页的字段切换和自定义模型保留。
+
+打包后运行 `python tests/smoke_packaged.py` 验证 exe 与 ConPTY。测试使用临时配置和模拟服务，不连接正在运行的 termpilot，也不调用模型。
+
 ```powershell
 .\tests\restart_server.ps1      # 只绑 127.0.0.1 的测试实例
 python tests\e2e.py             # 用 tests\fake_agent.ps1 模拟 safe / unsafe / choice 三种提示
@@ -156,7 +207,9 @@ termpilot/rules.py      提示识别 + 策略
 termpilot/screen.py     pyte 终端模拟
 termpilot/pty_session.py  ConPTY 会话
 termpilot/wt_attach.py  Windows Terminal 挂接（UIA + PostMessage）
-termpilot/reviewer.py   claude -p 二审
+termpilot/reviewer.py   Codex / Claude / Antigravity 二审
+termpilot/ai_cli.py     CLI 调用、模型参数、结果文件
+termpilot/supervisor.py Codex / Antigravity 定时巡检与结果校验
 termpilot/manager.py    会话表、提示生命周期、监控线程、事件总线
 termpilot/server.py     aiohttp HTTP/WS + 静态页
 static/                 WebUI（xterm.js 已本地 vendored）

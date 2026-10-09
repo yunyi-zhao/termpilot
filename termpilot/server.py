@@ -63,7 +63,12 @@ def build_app(cfg, mgr):
         name = (b.get("name") or "").strip()
         if not name or "/" in name:
             raise ValueError("name required")
-        s = mgr.create(name, b.get("cmd") or None, b.get("cwd") or None,
+        cmd = b.get("cmd") or None
+        if b.get("provider"):
+            if cmd:
+                raise ValueError("choose a CLI provider or a custom command, not both")
+            cmd = config_mod.session_command(mgr.supervisor_cfg(), b["provider"], b.get("model") or None)
+        s = mgr.create(name, cmd, b.get("cwd") or None,
                        int(b.get("cols") or 0) or None, int(b.get("rows") or 0) or None,
                        b.get("mode") or "auto")
         return _json(s.info())
@@ -135,15 +140,16 @@ def build_app(cfg, mgr):
 
     async def supervisor_start(request):
         b = await request.json() if request.can_read_body else {}
-        s = mgr.start_supervisor(restart=bool(b.get("restart", True)),
-                                 name=b.get("name"), model=b.get("model"), every=b.get("every"),
-                                 effort=b.get("effort"))
+        overrides = {key: b[key] for key in config_mod.DEFAULTS["supervisor"] if key in b}
+        s = mgr.start_supervisor(restart=bool(b.get("restart", True)), **overrides)
         return _json(s.info())
 
     async def supervisor_config_get(request):
         sc = mgr.supervisor_cfg()
         return _json({"config": sc, "command": config_mod.supervisor_command(sc),
                       "presets": config_mod.SUPERVISOR_PRESETS, "fields": config_mod.SUPERVISOR_FIELDS,
+                      "providers": config_mod.PROVIDERS, "field_providers": config_mod.FIELD_PROVIDERS,
+                      "catalog_date": config_mod.MODEL_CATALOG_DATE,
                       "running": bool(mgr.sessions.get(sc["name"]) and mgr.sessions[sc["name"]].alive())})
 
     async def supervisor_config_set(request):
@@ -277,8 +283,6 @@ def serve(cfg, hosts=None, port=None, approver=True):
     mgr = Manager(cfg)
     mgr.restore_state()
     mgr.start()
-    from .install import ensure_command_file
-    ensure_command_file()
     if approver and mgr.supervisor_cfg().get("autostart"):
         try:
             mgr.start_supervisor()

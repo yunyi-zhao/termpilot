@@ -205,9 +205,24 @@
   // ---------- new / attach ----------
   $("#newBtn").onclick = () => { $("#newForm").classList.toggle("hidden"); $("#attachForm").classList.add("hidden"); $("#nName").focus(); };
   $("#nCancel").onclick = () => $("#newForm").classList.add("hidden");
+  $("#nProvider").onchange = async () => {
+    const provider = $("#nProvider").value;
+    $("#nCommandField").classList.toggle("hidden", !!provider);
+    $("#nModelField").classList.toggle("hidden", !provider);
+    if (!provider) return;
+    $("#nModel").value = "";
+    $("#nModels").innerHTML = "";
+    const r = await api("GET", "/api/config/supervisor");
+    if ($("#nProvider").value !== provider) return;
+    const info = r.providers[provider];
+    $("#nModel").value = r.config[info.model_key] || "";
+    $("#nModels").innerHTML = r.presets[info.models_key].map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  };
   $("#nCreate").onclick = async () => {
     const name = $("#nName").value.trim(); if (!name) return;
-    const s = await api("POST", "/api/sessions", { name, cmd: $("#nCmd").value.trim(), cwd: $("#nCwd").value.trim(), mode: $("#nMode").value });
+    const provider = $("#nProvider").value;
+    const s = await api("POST", "/api/sessions", { name, provider, model: provider ? $("#nModel").value.trim() : "",
+      cmd: provider ? "" : $("#nCmd").value.trim(), cwd: $("#nCwd").value.trim(), mode: $("#nMode").value });
     $("#newForm").classList.add("hidden"); $("#nName").value = "";
     state.sessions.push(s); selectSession(name); closeDrawers();
   };
@@ -274,7 +289,7 @@
   api("GET", "/api/events").then(evs => evs.slice(-100).forEach(logEvent)).catch(() => {});
 
   // ---------- approver settings ----------
-  const settings = { fields: [], presets: {}, config: {} };
+  const settings = { fields: [], presets: {}, config: {}, providers: {}, fieldProviders: {} };
   function settingsValues() {
     const out = {};
     for (const [key, , kind] of settings.fields) {
@@ -286,16 +301,31 @@
     return out;
   }
   function settingsCommand(v) {
-    const parts = ["claude"];
-    if (v.permission_mode) parts.push("--permission-mode", v.permission_mode);
-    if (v.model) parts.push("--model", v.model);
-    if (v.effort) parts.push("--effort", v.effort);
-    if (v.extra_args) parts.push(v.extra_args);
-    $("#settingsCmd").textContent = parts.join(" ") + (v.every ? `   →  /loop ${v.every} /termpilot` : "   →  /termpilot");
+    const provider = v.provider || "codex", info = settings.providers[provider];
+    if (!info) return;
+    for (const [key] of settings.fields) {
+      const el = document.getElementById("sf_" + key);
+      el.closest("label").classList.toggle("hidden", !!settings.fieldProviders[key] && settings.fieldProviders[key] !== provider);
+    }
+    const codex = provider === "codex", claude = provider === "claude";
+    const parts = codex ? ["codex", "exec", "--sandbox", "read-only"] : claude ? ["claude"]
+      : ["agy", "--input-format", "stream-json", "--output-format", "stream-json", "--mode", "plan"];
+    if (claude && v.permission_mode) parts.push("--permission-mode", v.permission_mode);
+    const model = v[info.model_key];
+    if (model) parts.push("--model", model);
+    const effort = v[info.effort_key];
+    if (effort) parts.push(codex ? "-c" : "--effort", codex ? `model_reasoning_effort="${effort}"` : effort);
+    const extra = v[info.extra_key];
+    if (extra) parts.push(extra);
+    const schedule = !claude ? (v.every ? `   → 每轮结束后 ${v.every} 再巡检` : "   → 单次巡检")
+      : (v.every ? `   → /loop ${v.every} /termpilot` : "   → /termpilot");
+    $("#settingsCmd").textContent = parts.join(" ") + schedule;
   }
   async function openSettings() {
     const r = await api("GET", "/api/config/supervisor");
     settings.fields = r.fields; settings.presets = r.presets; settings.config = r.config;
+    settings.providers = r.providers; settings.fieldProviders = r.field_providers;
+    $("#catalogDate").textContent = `模型预设固定于 ${r.catalog_date}，可输入自定义模型 ID。`;
     const box = $("#settingsFields"); box.innerHTML = "";
     for (const [key, label, kind, ck] of r.fields) {
       const cur = r.config[key];

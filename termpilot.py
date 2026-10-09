@@ -18,6 +18,7 @@
   python termpilot.py firewall                 (allow the port from the Tailscale range)
 """
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -78,7 +79,7 @@ def stop_server(port):
 
 def setup_interactive(cfg, quick=False):
     """Terminal wizard for the approver settings. Returns the saved supervisor config."""
-    from termpilot.config import DEFAULTS, SUPERVISOR_FIELDS, SUPERVISOR_PRESETS, supervisor_command, save
+    from termpilot.config import DEFAULTS, SUPERVISOR_FIELDS, SUPERVISOR_PRESETS, FIELD_PROVIDERS, supervisor_command, save
     sc = dict(DEFAULTS["supervisor"]); sc.update(cfg.get("supervisor") or {})
     print("\n=== termpilot 审批者（approver）设置 ===  回车 = 保留 [当前值]，输入数字选预设，或直接输入自定义值\n")
     if quick:
@@ -86,6 +87,8 @@ def setup_interactive(cfg, quick=False):
         print("  command: " + supervisor_command(sc) + "\n")
         return sc
     for key, label, kind, ck in SUPERVISOR_FIELDS:
+        if FIELD_PROVIDERS.get(key, sc["provider"]) != sc["provider"]:
+            continue
         cur = sc.get(key)
         if kind == "bool":
             ans = input("  %s [%s] (y/n): " % (label, "y" if cur else "n")).strip().lower()
@@ -107,6 +110,7 @@ def setup_interactive(cfg, quick=False):
             ans = input("  %s [%s]: " % (label, cur if cur else "")).strip()
             if ans:
                 sc[key] = ans if ans != "-" else ""
+    supervisor_command(sc)  # validate before writing
     cfg["supervisor"] = sc
     save(cfg)
     print("\n  已保存到 config.json。审批者命令: " + supervisor_command(sc) + "\n")
@@ -132,6 +136,7 @@ def main(argv=None):
     p = sub.add_parser("install", help="(re)write ~/.claude/commands/termpilot.md for this machine"); p.add_argument("--force", action="store_true")
     p = sub.add_parser("new"); p.add_argument("name"); p.add_argument("--cmd", dest="shell"); p.add_argument("--cwd"); p.add_argument("--mode", default="auto")
     p.add_argument("--cols", type=int); p.add_argument("--rows", type=int)
+    p.add_argument("--provider", choices=list(config_mod.PROVIDERS)); p.add_argument("--model")
     sub.add_parser("ls")
     p = sub.add_parser("screen"); p.add_argument("name"); p.add_argument("-n", type=int, default=40)
     p = sub.add_parser("send"); p.add_argument("name"); p.add_argument("text", nargs="+")
@@ -154,8 +159,10 @@ def main(argv=None):
     p.add_argument("--timeout", type=int, default=50); p.add_argument("-n", type=int, default=60)
     p = sub.add_parser("context"); p.add_argument("name"); p.add_argument("-n", type=int, default=60)
     p = sub.add_parser("watch", help="live view of a session's screen (Ctrl-C to stop)"); p.add_argument("name"); p.add_argument("-n", type=int, default=0)
-    p = sub.add_parser("supervisor", help="start a Claude Code session that supervises the others (/loop 1m /termpilot)")
+    p = sub.add_parser("supervisor", help="start the configured Codex, Claude Code or Antigravity approver")
     p.add_argument("--name"); p.add_argument("--every"); p.add_argument("--no-loop", action="store_true")
+    p = sub.add_parser("supervisor-run", help=argparse.SUPPRESS)
+    p.add_argument("--settings", required=True)
     p = sub.add_parser("setup", help="interactive approver settings (model / effort / interval ...)")
     p.add_argument("--quick", action="store_true", help="don't ask, just print the current settings")
     p.add_argument("--show", action="store_true")
@@ -166,6 +173,11 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     cfg = config_mod.load()
+
+    if a.action == "supervisor-run":
+        from termpilot.supervisor import run
+        run(json.loads(base64.urlsafe_b64decode(a.settings).decode("utf-8")), cfg)
+        return
 
     if a.action == "gui":
         from termpilot.gui import main as gui_main
@@ -246,6 +258,7 @@ def main(argv=None):
 
     if a.action == "new":
         s = c.call("POST", "/api/sessions", {"name": a.name, "cmd": a.shell, "cwd": a.cwd,
+                                             "provider": a.provider, "model": a.model,
                                              "mode": a.mode, "cols": a.cols, "rows": a.rows})
         print("created %s pid=%s cmd=%r" % (s["name"], s.get("pid"), s["cmd"]))
     elif a.action == "ls":

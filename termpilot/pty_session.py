@@ -38,13 +38,23 @@ def key_to_bytes(key):
 
 
 def _spawn(cmd, cwd, env, cols, rows):
+    cmd = cmd.strip()
     argv = shlex.split(cmd, posix=False)
-    exe = which(argv[0], path=env.get("PATH", os.defpath))
+    exe = which(argv[0].strip('"'), path=env.get("PATH", os.defpath))
     if not exe:
         raise FileNotFoundError("command not found: %s" % argv[0])
     pty = PTY(cols, rows)
     envblock = "\0".join("%s=%s" % kv for kv in env.items()) + "\0"
-    cmdline = " " + subprocess.list2cmdline(argv[1:]) if len(argv) > 1 else None
+    # Preserve Windows quoting, including a quoted executable path with spaces.
+    cmdline = cmd[len(argv[0]):] or None
+    if exe.lower().endswith((".cmd", ".ps1")):
+        provider = os.path.splitext(os.path.basename(exe))[0].lower()
+        if provider in ("codex", "claude"):
+            from .ai_cli import cli_argv
+            resolved = cli_argv(provider)
+            exe = resolved[0]
+            prefix = " " + subprocess.list2cmdline(resolved[1:]) if len(resolved) > 1 else ""
+            cmdline = prefix + (cmdline or "") or None
     if cmdline:
         pty.spawn(exe, cwd=cwd or os.getcwd(), env=envblock, cmdline=cmdline)
     else:

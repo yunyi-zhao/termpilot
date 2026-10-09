@@ -12,12 +12,12 @@ from termpilot_cli_client import Client
 
 HELP = """commands:
   ls                         list sessions (with pending prompts)
-  new NAME [--cwd DIR] [--cmd "..."] [--mode auto|manual|off]
+  new NAME [--cwd DIR] [--cmd "..." | --provider codex|claude|antigravity] [--model ID] [--mode auto|manual|off]
   send NAME TEXT...          type a line + Enter into NAME
   keys NAME KEY...           enter esc up down tab 1 2 3 y n ctrl-c
   screen NAME [N]            last N lines of NAME's screen (default 30)
   watch NAME [N]             live view of NAME's screen, refreshes ~4x/s; any key stops
-  supervisor [NAME] [EVERY]  (re)start the approver Claude Code session (/loop EVERY /termpilot)
+  supervisor [NAME] [EVERY]  (re)start the configured Codex / Claude / Antigravity approver
   setup [restart]            approver settings wizard (model / effort / interval ...); 'setup restart' applies now
   prompts                    pending prompts
   approve ID | deny ID       act on a prompt (approve = Enter, deny = Esc)
@@ -100,13 +100,17 @@ class Console:
 
     def cmd_new(self, a):
         name, cwd, cmd, mode = a[0], None, None, "auto"
+        provider, model = None, None
         i = 1
         while i < len(a):
             if a[i] == "--cwd": cwd = a[i + 1]; i += 2
             elif a[i] == "--cmd": cmd = a[i + 1]; i += 2
             elif a[i] == "--mode": mode = a[i + 1]; i += 2
+            elif a[i] == "--provider": provider = a[i + 1]; i += 2
+            elif a[i] == "--model": model = a[i + 1]; i += 2
             else: i += 1
-        s = self.c.call("POST", "/api/sessions", {"name": name, "cwd": cwd, "cmd": cmd, "mode": mode})
+        s = self.c.call("POST", "/api/sessions", {"name": name, "cwd": cwd, "cmd": cmd, "mode": mode,
+                                                "provider": provider, "model": model})
         print("created %s (pid %s)" % (s["name"], s.get("pid")))
 
     def cmd_send(self, a):

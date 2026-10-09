@@ -214,7 +214,7 @@ class Manager:
         self.emit("mode", name, "mode -> %s" % mode)
         self._save_state()
 
-    # -- the approver (supervising Claude Code session) --------------------------
+    # -- the approver ----------------------------------------------------------
     def supervisor_cfg(self, **over):
         from . import config as config_mod
         c = dict(config_mod.DEFAULTS["supervisor"])
@@ -234,6 +234,7 @@ class Manager:
                 else:
                     v = (v or "").strip() if isinstance(v, str) else v
                 sc[k] = v
+        config_mod.supervisor_command(sc)  # validate before saving
         self.cfg["supervisor"] = sc
         disk = config_mod.load()
         disk["supervisor"] = sc
@@ -242,15 +243,10 @@ class Manager:
         return sc
 
     def start_supervisor(self, restart=False, **over):
-        """Spawn the approver session and hand it `/loop EVERY /termpilot`.
-
-        Runs claude in its own auto permission mode so its termpilot commands don't
-        prompt; its termpilot session is `manual` so the rule engine never answers
-        the approver's own prompts. Returns the session; the loop command is sent
-        from a background thread once Claude's input box appears.
-        """
+        """Start the configured approver; keep its own prompts in manual mode."""
         from . import config as config_mod
         sc = self.supervisor_cfg(**over)
+        cmd = config_mod.supervisor_command(sc)
         name = sc["name"]
         old = self.sessions.get(name)
         if old is not None:
@@ -258,10 +254,16 @@ class Manager:
                 raise ValueError("approver %r already running (use restart)" % name)
             self.remove(name)
             time.sleep(0.5)
-        cmd = config_mod.supervisor_command(sc)
+        if sc.get("provider", "codex") == "claude":
+            from .install import ensure_command_file
+            ensure_command_file()
         s = self.create(name, cmd, config_mod.ROOT, 140, 40, mode="manual")
         s.pinned = True
         s.role = "approver"
+        if sc.get("provider", "codex") in ("codex", "antigravity"):
+            info = config_mod.provider_info(sc.get("provider", "codex"))
+            self.emit("approver", name, "started %s scheduler (%s)" % (info["label"], sc.get(info["model_key"])))
+            return s
         loop_cmd = "/loop %s /termpilot" % sc["every"] if sc.get("every") else "/termpilot"
 
         def handoff():

@@ -28,7 +28,7 @@ $ex = $excludes | ForEach-Object { "--exclude-module"; $_ }
   --hidden-import win32timezone `
   --hidden-import termpilot_cli_client --hidden-import termpilot_cli `
   --hidden-import termpilot.console --hidden-import termpilot.server --hidden-import termpilot.install `
-  --hidden-import termpilot.gui --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox `
+  --hidden-import termpilot.supervisor --hidden-import termpilot.ai_cli --hidden-import termpilot.gui --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox `
   termpilot.py
 
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }

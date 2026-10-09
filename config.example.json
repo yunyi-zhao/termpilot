@@ -11,19 +11,36 @@
   "default_shell": "pwsh -NoLogo",
   "default_cols": 120,
   "default_rows": 35,
-  "rules": {
-    "safe_override_patterns_extra": [],
-    "unsafe_patterns_extra": []
+  "rules": {},
+  "reviewer": {
+    "enabled": false,
+    "provider": "codex",
+    "model": "gpt-5.3-codex-spark",
+    "claude_model": "claude-opus-5",
+    "antigravity_model": "gemini-3.8-flash-high",
+    "claude_effort": "high",
+    "antigravity_effort": "",
+    "claude_extra_args": "",
+    "antigravity_extra_args": "",
+    "command": "",
+    "timeout": 90,
+    "effort": "xhigh"
   },
-  "reviewer": { "enabled": false, "command": "claude -p --model opus", "timeout": 90 },
   "supervisor": {
     "autostart": true,
     "name": "approver",
-    "model": "opus",
-    "effort": "high",
+    "provider": "codex",
+    "model": "gpt-5.3-codex-spark",
+    "claude_model": "claude-opus-5",
+    "antigravity_model": "gemini-3.8-flash-high",
+    "claude_effort": "high",
+    "antigravity_effort": "",
+    "antigravity_extra_args": "",
+    "effort": "xhigh",
     "every": "1m",
     "permission_mode": "auto",
-    "extra_args": ""
+    "extra_args": "",
+    "claude_extra_args": ""
   },
   "log_file": "termpilot.log"
 }
