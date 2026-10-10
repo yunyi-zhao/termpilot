@@ -1,6 +1,7 @@
 """Session registry, prompt lifecycle, monitor loop and event bus."""
 import itertools
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -22,7 +23,19 @@ def _slug(title, maxlen=24):
 TAIL_LINES = 25      # lines checked for an approval prompt
 CONTEXT_LINES = 60   # lines given to the policy / reviewer
 
-PROMPT_ACTIVE = ("candidate", "pending", "reviewing", "held", "approved", "denied")
+PROMPT_ACTIVE = ("candidate", "pending", "reviewing", "explaining", "judging", "held", "approved", "denied")
+REJECT_TIMEOUT = 10  # seconds for a rejected dialog to leave the screen before we type
+# Last screen line of a bare shell (PowerShell, cmd, bash): the agent quit on Esc.
+SHELL_PROMPT = re.compile(r"^(?:\(\S+\)\s*)?(?:PS [A-Za-z]:\\[^>]*>|[A-Za-z]:\\[^>]*>|\S*[$#])\s*$")
+
+
+# The question typed into the agent. Lower case with no shifted punctuation, because
+# attached Windows Terminal tabs get keystrokes without a real Shift key. It must not
+# match any unsafe pattern itself: it stays in the screen context the rules read.
+EXPLAIN_MESSAGE = ("[termpilot] your last command was blocked as potentially unsafe. explain why it "
+                   "is needed, exactly what it will change, and whether a safer alternative exists. "
+                   "if it is still necessary, request the same command again and it will be "
+                   "re-reviewed together with your explanation.")
 
 
 class Prompt:
@@ -35,9 +48,11 @@ class Prompt:
         self.snippet = rules_mod.snippet(tail)
         self.context = context
         self.detected_at = time.time()
-        self.status = "pending"     # pending|reviewing|approved|held|denied|resolved
+        # pending|reviewing|explaining|judging|approved|held|denied|resolved
+        self.status = "pending"
         self.reason = ""
-        self.decided_by = ""        # rules|llm|human|manual
+        self.decided_by = ""        # rules|llm|explain|human|manual
+        self.escalated = False      # failed the explanation check: only a human decides
         self.seen = 1
         self.acted_seen = 0
         self.retries = 0
@@ -48,7 +63,7 @@ class Prompt:
             "id": self.id, "session": self.session, "hash": self.hash,
             "snippet": self.snippet, "status": self.status, "reason": self.reason,
             "decided_by": self.decided_by, "detected_at": self.detected_at,
-            "resolved_at": self.resolved_at, "retries": self.retries,
+            "resolved_at": self.resolved_at, "retries": self.retries, "escalated": self.escalated,
         }
 
 
@@ -315,11 +330,14 @@ class Manager:
             i = s.info()
             i["pinned"] = getattr(s, "pinned", False)
             i["role"] = getattr(s, "role", "")
+            ex = getattr(s, "explain", None)
+            i["explain"] = ex and {"reason": ex["reason"], "asked_at": ex["asked_at"]}
             infos.append(i)
         infos.sort(key=lambda i: (not i["pinned"], i["created_at"]))
         return {
             "sessions": infos,
-            "pending": [p.info() for p in self.prompts.values() if p.status in ("pending", "reviewing", "held")],
+            "pending": [p.info() for p in self.prompts.values()
+                        if p.status in ("pending", "reviewing", "judging", "held")],
             "reviewer": self.reviewer.enabled,
         }
 
@@ -380,18 +398,28 @@ class Manager:
             if s.current_prompt and s.current_prompt.status in PROMPT_ACTIVE:
                 self._resolve(s.current_prompt, "detection off")
                 s.current_prompt = None
+            s.explain = None
             return
         text = (s.screen_text() or "").rstrip()   # drop blank rows below the cursor
         lines = text.splitlines()
         tail = "\n".join(lines[-TAIL_LINES:])
         ctx = "\n".join(lines[-CONTEXT_LINES:])
         cur = s.current_prompt
+        ex = getattr(s, "explain", None)
+        if ex and ex["asked_at"] and time.time() - ex["asked_at"] > float(self.explain_cfg()["window"]):
+            s.explain = ex = None
+            self.emit("explain", s.name, "no new request within %ss; nothing left to judge"
+                      % self.explain_cfg()["window"])
 
         if not self.rules.find_live_prompt(tail, int(self.cfg.get("stale_lines", 1))):
             if cur and cur.status in PROMPT_ACTIVE:
                 self._resolve(cur, "prompt gone")
                 s.current_prompt = None
+            if ex and ex["asked_at"] and not ex["locked"]:
+                ex["answer"] = ctx   # the agent's reply, before a new dialog covers it
             return
+        if ex and ex["answer"]:
+            ex["locked"] = True
 
         h = rules_mod.prompt_hash(tail)
         confirm = int(self.cfg.get("confirm_cycles", 2))
@@ -431,7 +459,17 @@ class Manager:
             self.hold(p, "manual", "manual mode: waiting for human")
             return
 
-        decision, reason = self.rules.classify(ctx)
+        decision, kind, match = self.rules.assess(ctx)
+        reason = self.rules.reason(kind, match)
+        if kind == "unsafe" and self.explain_cfg()["enabled"] and self.rules.is_agent_dialog(ctx):
+            ex = getattr(s, "explain", None)
+            if ex is None and time.time() >= getattr(s, "explain_paused_until", 0):
+                self._start_explaining(s, p, reason)
+                return
+            if ex is not None and ex["asked_at"]:
+                self._start_judging(s, p, ex, reason)
+                return
+            # still typing the question, or the last attempt failed: plain hold
         if decision == "hold":
             self.hold(p, "rules", reason)
             return
@@ -450,6 +488,85 @@ class Manager:
             self.approve(p.id, by="llm", reason=reason)
         else:
             self.hold(p, "llm", reason)
+
+    # -- unsafe command: ask the agent why, judge once more, then a human -----
+    def explain_cfg(self):
+        from . import config as config_mod
+        c = dict(config_mod.DEFAULTS["explain"])
+        c.update(self.cfg.get("explain") or {})
+        return c
+
+    def _start_explaining(self, s, p, reason):
+        p.status, p.decided_by = "explaining", "explain"
+        p.reason = reason + "; asking the agent why it is needed"
+        s.explain = {"reason": reason, "original": p.context, "answer": "", "locked": False, "asked_at": None}
+        self.emit("explain", s.name, p.reason, prompt=p.info())
+        threading.Thread(target=self._ask_explanation, args=(s, p, EXPLAIN_MESSAGE),
+                         name="explain-" + s.name, daemon=True).start()
+
+    def _ask_explanation(self, s, p, message):
+        ex = s.explain
+        try:
+            s.send_keys(["esc"])            # reject this attempt; the agent gets its input box back
+            s.last_action_at = time.time()
+            deadline = time.time() + REJECT_TIMEOUT
+            while p.status == "explaining" and time.time() < deadline:
+                time.sleep(0.25)
+            if p.status == "explaining":
+                self._pause_explaining(s)
+                self.hold(p, "explain", ex["reason"] + "; Esc did not close the dialog")
+                return
+            if p.status != "resolved":
+                s.explain = None            # a human answered the dialog meanwhile
+                return
+            time.sleep(1.0)
+            if getattr(s, "explain", None) is not ex:
+                return                      # detection switched off meanwhile
+            lines = (s.screen_text() or "").rstrip().splitlines()
+            tail = "\n".join(lines[-TAIL_LINES:])
+            if self.rules.find_live_prompt(tail, int(self.cfg.get("stale_lines", 1))):
+                # The agent asked again before the question was typed; that dialog is
+                # decided by the plain rules. Typing now would answer it.
+                self._pause_explaining(s)
+                self.emit("explain", s.name, "a new dialog appeared before the question was sent")
+                return
+            if lines and SHELL_PROMPT.match(lines[-1].strip()):
+                s.explain = None            # the text would go to the shell, not the agent
+                self.emit("explain", s.name, "the agent exited to a shell; question not sent")
+                return
+            s.write(message)
+            time.sleep(0.8)
+            s.send_keys(["enter"])
+            s.last_action_at = ex["asked_at"] = time.time()
+            self.emit("explain", s.name, "asked the agent: " + message)
+        except Exception as e:
+            if getattr(s, "explain", None) is ex:
+                s.explain = None
+            log.exception("explain %s failed", s.name)
+            self.emit("explain", s.name, "could not ask for an explanation: %s" % e)
+
+    def _pause_explaining(self, s):
+        """This agent does not take the question; hold its unsafe requests for a while
+        instead of pressing Esc on every one of them."""
+        s.explain = None
+        s.explain_paused_until = time.time() + float(self.explain_cfg()["window"])
+
+    def _start_judging(self, s, p, ex, reason):
+        s.explain = None                    # one judgment per explanation
+        p.status, p.decided_by = "judging", "explain"
+        p.reason = reason + "; judging the agent's explanation"
+        self.emit("judging", s.name, p.reason, prompt=p.info())
+        threading.Thread(target=self._judge, args=(s, p, ex, reason), name="judge-" + s.name, daemon=True).start()
+
+    def _judge(self, s, p, ex, reason):
+        decision, why = self.reviewer.judge_explanation(reason, ex["original"], ex["answer"], p.context)
+        if p.status != "judging" or s.current_prompt is not p:
+            return  # resolved or a human acted meanwhile
+        if decision == "approve":
+            self.approve(p.id, by="explain", reason="explanation accepted: " + why)
+        else:
+            p.escalated = True
+            self.hold(p, "explain", "still unsafe after explanation, needs a human: " + why)
 
     def _resolve(self, p, why):
         p.status = "resolved"

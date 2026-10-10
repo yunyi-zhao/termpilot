@@ -60,6 +60,10 @@ DEFAULTS = {
                  "claude_model": "claude-opus-5-5", "antigravity_model": "gemini-3.8-flash-high",
                  "claude_effort": "high", "antigravity_effort": "",
                  "claude_extra_args": "", "antigravity_extra_args": "", "command": "", "timeout": 90},
+    # Unsafe agent commands: reject once, ask the agent why, judge the re-request with the
+    # reviewer's model, and leave it to a human if it is still unsafe. `window` is how long
+    # (seconds) a re-request counts as the answer to the question.
+    "explain": {"enabled": True, "window": 300},
     # Codex and Antigravity use the local scheduler; Claude keeps /loop.
     "supervisor": {"autostart": True, "name": "approver", "provider": "codex",
                    "model": "gpt-6.1-sol", "claude_model": "claude-opus-5-5", "effort": "xhigh", "every": "1m",

@@ -34,8 +34,10 @@ def interval_seconds(value):
 
 
 def review_cycle(client, sc, guidance=""):
+    # Escalated prompts failed the explanation check: only a human decides those.
     pending = [p for p in client.call("GET", "/api/prompts")
-               if p["status"] in ("held", "pending") and p["session"] != sc.get("name", "approver")]
+               if p["status"] in ("held", "pending") and p["session"] != sc.get("name", "approver")
+               and not p.get("escalated")]
     if not pending:
         print("NO_PROMPT: nothing waiting for review.", flush=True)
         return

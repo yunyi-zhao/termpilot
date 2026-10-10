@@ -26,6 +26,7 @@ If the server is not running, start it with `{{TP}} start` (project dir: `{{ROOT
 
 1. Run `wait --timeout 50`. `NO_PROMPT` means nothing to do this cycle; say so in one line and stop.
 2. For each PROMPT block, read the full context between `---CONTEXT_START---` and `---CONTEXT_END---`. The prompt was already filtered by the regex rules: `reason` tells you why it was held (unsafe pattern, direction choice, or manual mode). You make the real decision.
+   Unsafe agent commands are handled before they reach you: termpilot rejects the first attempt, asks the agent why it needs the command, and has the reviewer model judge the re-request. Prompts that fail that check are `escalated`; `wait` leaves them out and they are for the user only. Do not approve them, even if `ls` or `prompts` shows them.
 3. Act with `approve ID` / `deny ID` / `keys NAME n` / `send NAME "..."`, then print one line per prompt: what it was, what you did, why.
 4. If the same prompt is still there on the next cycle after you approved it, look at the screen with `context NAME`; the agent may need a different key (option number) or text.
 

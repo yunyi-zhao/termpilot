@@ -267,7 +267,7 @@ def main(argv=None):
             print("(no sessions)")
         for s in ss:
             pr = s.get("prompt")
-            pstat = ("PROMPT %s #%s" % (pr["status"], pr["id"])) if pr and pr["status"] in ("pending", "reviewing", "held") else ""
+            pstat = ("PROMPT %s #%s" % (pr["status"], pr["id"])) if pr and pr["status"] in ("pending", "reviewing", "explaining", "judging", "held") else ""
             print("%-16s %-4s %-6s %-5s %s  %s" % (s["name"], s["kind"], s["mode"], "alive" if s["alive"] else "dead",
                                                    s["cmd"][:40], pstat))
     elif a.action == "screen":
@@ -285,9 +285,10 @@ def main(argv=None):
     elif a.action == "prompts":
         ps = c.call("GET", "/api/prompts")
         for p in ps:
-            if not a.all and p["status"] not in ("pending", "reviewing", "held"):
+            if not a.all and p["status"] not in ("pending", "reviewing", "judging", "held"):
                 continue
-            print("#%-4d %s %-10s %-9s %s" % (p["id"], fmt_ts(p["detected_at"]), p["session"], p["status"], p["reason"]))
+            print("#%-4d %s %-10s %-9s %s%s" % (p["id"], fmt_ts(p["detected_at"]), p["session"], p["status"],
+                                                "[human only] " if p.get("escalated") else "", p["reason"]))
             for line in p["snippet"].splitlines()[-4:]:
                 print("       | " + line)
     elif a.action == "approve":
@@ -326,7 +327,9 @@ def main(argv=None):
             print()
     elif a.action in ("wait", "context"):
         def held():
-            return [p for p in c.call("GET", "/api/prompts") if p["status"] in ("held", "pending", "reviewing")]
+            # escalated prompts failed the explanation check and wait for a human, not the approver
+            return [p for p in c.call("GET", "/api/prompts")
+                    if p["status"] in ("held", "pending", "reviewing") and not p.get("escalated")]
         if a.action == "wait":
             t0 = time.time()
             ps = held()

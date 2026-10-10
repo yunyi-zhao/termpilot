@@ -5,7 +5,7 @@
   if (qsToken) { try { localStorage.setItem("tp_token", qsToken); } catch (e) {} history.replaceState(null, "", location.pathname); }
   let token = null; try { token = localStorage.getItem("tp_token"); } catch (e) {}
 
-  const LIVE = ["pending", "reviewing", "held"];
+  const LIVE = ["pending", "reviewing", "judging", "held"];
   const state = { sessions: [], pending: [], cur: null, terms: {}, wts: {}, evws: null, selHwnd: null, selTab: "" };
   const termHost = $("#termHost"), wtScreen = $("#wtScreen"), overview = $("#overview"), app = $("#app");
   const screens = {};  // name -> last screen text (overview cards)
@@ -155,7 +155,8 @@
       card.innerHTML = `<div class="top"><span class="st ${statusClass(s, now)}"></span><b>${s.pinned ? "★ " : ""}${esc(s.name)}</b>${role}<span class="kd">${s.kind} · ${s.mode}${s.alive ? "" : " · 已退出"}${hidden}</span></div>
         <div class="cmd">${esc(s.cmd)}${s.cwd ? " — " + esc(s.cwd) : ""}</div>
         <pre>${esc(tail || "…")}</pre>
-        ${p ? `<div class="pr">⚑ ${esc(p.status)} · ${esc(p.reason || "")}</div>
+        ${!p && s.explain ? `<div class="pr">？ 已拒绝一次，等待 agent 解释 · ${esc(s.explain.reason)}</div>` : ""}
+        ${p ? `<div class="pr">⚑ ${p.escalated ? "需人工 · " : ""}${esc(p.status)} · ${esc(p.reason || "")}</div>
         <div class="acts"><button class="primary small ok">批准</button><button class="danger small no">拒绝</button></div>` : ""}`;
       card.onclick = (e) => { if (e.target.tagName !== "BUTTON") selectSession(s.name); };
       if (p) { card.querySelector(".ok").onclick = () => api("POST", `/api/prompts/${p.id}/approve`);
@@ -267,7 +268,7 @@
     if (!state.pending.length) { ul.innerHTML = "<li class='muted'>无</li>"; return; }
     for (const p of state.pending) {
       const li = document.createElement("li");
-      li.innerHTML = `<div class="meta"><b>${esc(p.session)}</b> #${p.id} · ${p.status} · ${ts(p.detected_at)}</div>
+      li.innerHTML = `<div class="meta"><b>${esc(p.session)}</b> #${p.id} · ${p.escalated ? "需人工 · " : ""}${p.status} · ${ts(p.detected_at)}</div>
         <pre>${esc(p.snippet)}</pre><div class="reason">${esc(p.reason || "")}</div>
         <div class="acts"><button class="primary small ok">批准 (Enter)</button><button class="danger small no">拒绝 (Esc)</button><button class="small go">打开</button></div>`;
       li.querySelector(".ok").onclick = () => api("POST", `/api/prompts/${p.id}/approve`);

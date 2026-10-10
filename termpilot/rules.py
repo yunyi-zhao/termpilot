@@ -50,6 +50,15 @@ DEFAULT_RULES = {
     ],
     # Matches here win over unsafe_patterns (e.g. flashing an FPGA board with dd).
     "safe_override_patterns": [],
+    # The dialog belongs to an AI agent that takes a typed reply after Esc (Claude Code,
+    # Codex, Gemini, Antigravity). Plain shell [y/N] prompts must not match: text typed
+    # into a shell runs as a command.
+    "agent_patterns": [
+        r"esc to cancel",
+        r"\(esc\)",
+        r"what to do differently",
+        r"suggest changes",
+    ],
 }
 
 
@@ -107,18 +116,32 @@ class Rules:
         content = [l for l in lines[end_idx + 1:] if _ALNUM.search(l) and not _PROMPT_LINE.search(l)]
         return len(content) <= stale_lines
 
-    def classify(self, context):
-        """Return ('approve'|'hold', reason)."""
+    def assess(self, context):
+        """Return (decision, kind, match): kind is override|direction|unsafe|ok."""
         m = self._first("safe_override_patterns", context)
         if m:
-            return "approve", "safe override: %r" % m
+            return "approve", "override", m
         m = self._first("direction_patterns", context)
         if m:
-            return "hold", "direction choice: %r" % m
+            return "hold", "direction", m
         m = self._first("unsafe_patterns", context)
         if m:
-            return "hold", "unsafe command: %r" % m
-        return "approve", "no unsafe/direction pattern matched"
+            return "hold", "unsafe", m
+        return "approve", "ok", None
+
+    @staticmethod
+    def reason(kind, match):
+        fmt = {"override": "safe override: %r", "direction": "direction choice: %r",
+               "unsafe": "unsafe command: %r"}.get(kind)
+        return fmt % match if fmt else "no unsafe/direction pattern matched"
+
+    def classify(self, context):
+        """Return ('approve'|'hold', reason)."""
+        decision, kind, m = self.assess(context)
+        return decision, self.reason(kind, m)
+
+    def is_agent_dialog(self, context):
+        return self._first("agent_patterns", context) is not None
 
 
 def prompt_hash(tail):

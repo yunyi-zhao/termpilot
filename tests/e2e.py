@@ -15,7 +15,7 @@ FAKE = os.path.join(ROOT, "tests", "fake_agent.ps1")
 
 
 def pending(c):
-    return [p for p in c.call("GET", "/api/prompts") if p["status"] in ("pending", "reviewing", "held")]
+    return [p for p in c.call("GET", "/api/prompts") if p["status"] in ("pending", "reviewing", "judging", "held")]
 
 
 def wait_for(fn, timeout=8, every=0.5):
@@ -57,14 +57,29 @@ def main():
     print("    pending after settle:", len(pending(c)))
     ok &= len(pending(c)) == 0
 
-    # 2. unsafe -> held, then human approve
+    # 2. unsafe -> rejected once, agent asked why, re-request judged by the reviewer model;
+    #    if the judge holds it, a human approves.
     run("unsafe")
-    p = wait_for(lambda: [x for x in pending(c) if x["session"] == name])
-    print("[2] unsafe held:", bool(p), "|", p[0]["status"] if p else None, "|", p[0]["reason"] if p else None)
-    ok &= bool(p) and p[0]["status"] == "held" and "unsafe" in p[0]["reason"]
-    c.call("POST", "/api/prompts/%d/approve" % p[0]["id"])
+    asked = wait_for(lambda: "[fake-agent] got reply: [termpilot]" in screen(), timeout=20)
+    print("[2] unsafe: agent asked to explain:", bool(asked))
+    ok &= bool(asked)
+    judged = wait_for(lambda: [e for e in c.call("GET", "/api/events")
+                               if e["kind"] == "judging" and e["session"] == name], timeout=20)
+    print("    re-request sent to the judge:", bool(judged))
+    ok &= bool(judged)
+    def outcome():
+        if "APPROVED -> running: Remove-Item" in screen():
+            return "judge approved"
+        held = [x for x in pending(c) if x["session"] == name and x["status"] == "held"]
+        return held and ("escalated" if held[0]["escalated"] else "held")
+    how = wait_for(outcome, timeout=150, every=1)
+    print("    judge result:", how)
+    ok &= how in ("judge approved", "escalated")
+    if how == "escalated":
+        p = [x for x in pending(c) if x["session"] == name]
+        c.call("POST", "/api/prompts/%d/approve" % p[0]["id"])
     got = wait_for(lambda: "APPROVED -> running: Remove-Item" in screen())
-    print("    human approve delivered:", bool(got))
+    print("    command ran:", bool(got))
     ok &= bool(got)
     time.sleep(3)
     print("    pending after settle:", len(pending(c)))
@@ -86,7 +101,8 @@ def main():
     # 4. manual mode -> safe prompt is held
     c.call("POST", "/api/sessions/%s/mode" % name, {"mode": "manual"})
     run("safe")
-    p = wait_for(lambda: [x for x in pending(c) if x["session"] == name])
+    # wait for "held": a poll can land between detection and the hold
+    p = wait_for(lambda: [x for x in pending(c) if x["session"] == name and x["status"] == "held"])
     print("[4] manual mode holds safe prompt:", bool(p), "|", p[0]["reason"] if p else None)
     ok &= bool(p) and p[0]["status"] == "held"
     c.call("POST", "/api/sessions/%s/keys" % name, {"keys": ["enter"]})

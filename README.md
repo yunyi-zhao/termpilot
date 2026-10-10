@@ -8,7 +8,7 @@ Supervise Codex, Claude Code and Antigravity CLI in your Windows terminals. Each
 
 - **托管会话（pty）**：termpilot 自己用 ConPTY 启动 `pwsh`，输出流和按键都是确定的，WebUI 里是真正的 xterm.js 终端，可以远程敲命令。
 - **挂接会话（wt）**：通过 UI Automation 读取已经开着的 Windows Terminal 窗口（当前活动 tab），用 PostMessage 发按键，不抢焦点。只读文本，不是完整终端。
-- **审批引擎**：每秒看一次屏幕，识别 Claude Code / Codex / Gemini CLI 风格的权限提示；规则判定安全就自动 Enter，删除类命令、破坏性 git、进程/系统操作、"让你选方案"的提问一律 hold 住等人。可选接 Codex（默认）或 Claude CLI 做二次审核。
+- **审批引擎**：每秒看一次屏幕，识别 Claude Code / Codex / Gemini CLI 风格的权限提示；规则判定安全就自动 Enter；删除类命令、破坏性 git、进程/系统操作先拒绝一次并让 agent 解释原因，重新申请时由模型结合解释再判一次，仍不安全才转人工；"让你选方案"的提问一律 hold 住等人。可选接 Codex（默认）或 Claude CLI 做二次审核。
 - **三种模式**：`auto`（规则自动批准）、`manual`（全部等人）、`off`（不检测）。
 
 ## 启动
@@ -79,6 +79,20 @@ Codex 审批者由 termpilot 定时调度：获取待审批提示和终端画面
 - 重启：总控终端 `supervisor`，或 `python termpilot.py supervisor [--every 5m]`。
 - 单轮：`python termpilot.py supervisor --no-loop`，或将 `every` 留空。
 - 二审：`reviewer.enabled=true`；同样支持三种 provider 及各自的模型字段，默认关闭。二审失败或回答含糊时 hold。
+
+## 不安全命令：先问原因，再判一次
+
+规则把 agent 的权限请求判为不安全命令（`unsafe_patterns`）时，不再直接 hold：
+
+1. termpilot 按 Esc 拒绝这一次，然后在 agent 的输入框里打一句话，要求它说明为什么需要、具体会改动什么、有没有更安全的替代做法；仍然需要的话就重新申请同一条命令。
+2. `explain.window` 秒内（默认 300），这个会话里再出现的不安全请求不会再问一次，而是交给模型做二次判断：模型能看到第一次的请求、agent 回答时的屏幕和新的请求。只有解释具体、命令与解释相符、影响限于项目/构建产物/临时文件时才放行（`decided_by=explain`）。
+3. 二次判断仍不安全，或模型调用失败、回答无法解析，提示就 hold 并标记 `escalated`，只等人工处理：审批者（approver）的 `wait` 和定时审核都会跳过它，WebUI 上显示"需人工"。窗口内 agent 没有重新申请时，只记一条事件，不做别的。
+
+二次判断用的是 `reviewer` 里的 provider / 模型 / effort / timeout，`reviewer.enabled=false` 也照用（`enabled` 只管规则判为安全的那部分是否再审）。判断提示里带上 `/termpilot` 命令模板中的 Decision rules，所以像 FPGA 烧录这类你明确允许的操作，标准与审批者一致。**所选 provider 的 CLI 必须处于登录状态**，否则每次二次判断都会失败并转人工。
+
+只对 AI agent 的对话框生效：识别依据是 `agent_patterns`（"esc to cancel"、"(esc)"、"what to do differently"、"suggest changes"）。普通 shell 的 `[y/N]` 确认、方向选择和 manual 模式的会话照旧直接 hold。Esc 之后如果屏幕最后一行是 shell 提示符（agent 已退出），不会输入任何文字。输入的那句话只用小写、不用需要 Shift 的符号（挂接的 Windows Terminal 标签页收不到真实的 Shift），也不含任何不安全关键词，免得留在屏幕上的这句话让后面的请求被误判。
+
+关掉这个功能：`config.json` 里设 `"explain": {"enabled": false}`，回到直接 hold 的老行为。
 
 ## 同时运行三种 CLI
 
@@ -168,11 +182,12 @@ python termpilot.py kill agent1
 | `retry_cycles` / `max_retries` | 5 / 3 | 批准后提示仍在就重发 Enter |
 | `default_shell` | `pwsh -NoLogo` | 新会话命令 |
 | `rules` | `{}` | 见下 |
-| `reviewer` | `{"enabled": false, "provider": "codex", "model": "gpt-6.1-sol", "effort": "xhigh", "command": "", "timeout": 90}` | LLM 二审 |
+| `reviewer` | `{"enabled": false, "provider": "codex", "model": "gpt-6.1-sol", "effort": "xhigh", "command": "", "timeout": 90}` | LLM 二审；也是不安全命令二次判断所用的模型 |
+| `explain` | `{"enabled": true, "window": 300}` | 不安全命令先问原因再判一次，见上文 |
 
 ### 规则
 
-`rules` 里可以整体覆盖 `approval_patterns` / `unsafe_patterns` / `direction_patterns` / `safe_override_patterns`，或者用 `*_extra` 追加。默认规则在 `termpilot/rules.py`。例子：
+`rules` 里可以整体覆盖 `approval_patterns` / `unsafe_patterns` / `direction_patterns` / `safe_override_patterns` / `agent_patterns`，或者用 `*_extra` 追加。默认规则在 `termpilot/rules.py`。例子：
 
 ```json
 "rules": {
@@ -181,7 +196,7 @@ python termpilot.py kill agent1
 }
 ```
 
-判定顺序：safe_override → direction（hold）→ unsafe（hold）→ approve。`reviewer.enabled` 为 true 时，规则判定为 approve 的提示还要过一遍 LLM，LLM 回 HOLD 则 hold。
+判定顺序：safe_override → direction（hold）→ unsafe（agent 对话框且 `explain.enabled`：先问原因再判一次；否则 hold）→ approve。`reviewer.enabled` 为 true 时，规则判定为 approve 的提示还要过一遍 LLM，LLM 回 HOLD 则 hold。
 
 ## 挂接模式的限制
 
@@ -191,7 +206,7 @@ python termpilot.py kill agent1
 
 ## 测试
 
-不调用真实模型的回归测试：`python -m unittest discover -s tests -p 'test_*.py' -v`。覆盖三种 CLI 的配置保存、参数隔离、模型结果解析、接口路由、错误和过期审批结果。`node tests/test_settings.js` 检查设置页的字段切换和自定义模型保留。
+不调用真实模型的回归测试：`python -m unittest discover -s tests -p 'test_*.py' -v`。覆盖三种 CLI 的配置保存、参数隔离、模型结果解析、接口路由、错误和过期审批结果，以及不安全命令的"问原因 → 二次判断 → 转人工"流程（`tests/test_explain.py`，用模拟会话，二次判断打桩）。`node tests/test_settings.js` 检查设置页的字段切换和自定义模型保留。
 
 打包后运行 `python tests/smoke_packaged.py` 验证 exe 与 ConPTY。测试使用临时配置和模拟服务，不连接正在运行的 termpilot，也不调用模型。
 
@@ -199,6 +214,8 @@ python termpilot.py kill agent1
 .\tests\restart_server.ps1      # 只绑 127.0.0.1 的测试实例
 python tests\e2e.py             # 用 tests\fake_agent.ps1 模拟 safe / unsafe / choice 三种提示
 ```
+
+`e2e.py` 的 unsafe 场景会真的调用一次 `reviewer` 的模型做二次判断，需要对应 CLI 已登录。`restart_server.ps1` 会结束 8787 上的任何进程，包括正在用的 termpilot；不想打断它时，在 `config.json` 里换端口并设 `api_base`，再用 `python termpilot.py serve --host 127.0.0.1 --port <端口> --no-approver` 起测试实例。
 
 ## 文件
 

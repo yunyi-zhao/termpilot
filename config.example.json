@@ -26,6 +26,10 @@
     "timeout": 90,
     "effort": "xhigh"
   },
+  "explain": {
+    "enabled": true,
+    "window": 300
+  },
   "supervisor": {
     "autostart": true,
     "name": "approver",
